@@ -12,4 +12,4 @@
 latexmk -xelatex -interaction=nonstopmode -file-line-error 2.9.tex
 ```
 
-不需要原始代码、数据文件或本地实验目录。
+暂不包含原始代码、数据文件或本地实验。
