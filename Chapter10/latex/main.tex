@@ -1,0 +1,520 @@
+\documentclass[UTF8,zihao=-4,openany]{ctexbook}
+
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,calc,positioning,shapes.geometric}
+\usepackage{hyperref}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  urlcolor=blue!60!black
+}
+
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0pt}
+\raggedbottom
+
+\definecolor{chapterblue}{RGB}{33,91,155}
+\definecolor{chapterred}{RGB}{184,54,48}
+\definecolor{chaptergreen}{RGB}{45,128,92}
+
+\begin{document}
+
+\setcounter{chapter}{9}
+\chapter{核回归、核方法与相似性学习}
+% 第一节需要显示为 10.5，因此这里设置为 4；\section 会自动加 1。
+\setcounter{section}{4}
+
+% 建议将原“核技巧”部分移到“核回归模型”之前。
+% 本文件可直接替换原稿中相关两节；已有 TikZ 图可按文中注释插回。
+
+\section{核技巧：从显式映射到核函数}
+
+核函数在不同方法中承担的作用并不完全相同。在 Nadaraya--Watson 核回归中，核值被直接用作局部加权系数；在核岭回归、支持向量机等核方法中，核函数则表示某个特征空间中的内积。为了说明后一种用法，本节先介绍核技巧以及有效核函数需要满足的条件。
+
+\subsection{为什么可以用核函数代替显式特征映射}
+
+设原始样本为 $\boldsymbol{x}\in\mathbb{R}^{d}$，通过映射
+\[
+  \phi:\mathbb{R}^{d}\rightarrow\mathcal{H}
+\]
+进入特征空间 $\mathcal{H}$。在该空间中，线性模型可以写成
+\[
+  f(\boldsymbol{x})
+  =
+  \langle \boldsymbol{w},\phi(\boldsymbol{x})\rangle_{\mathcal H}.
+\]
+许多线性学习算法经过对偶化后，只通过样本间的内积
+\[
+  \langle\phi(\boldsymbol{x}),\phi(\boldsymbol{z})\rangle_{\mathcal H}
+\]
+使用映射后的特征，而不需要逐个读取 $\phi(\boldsymbol{x})$ 的坐标。若存在函数 $k$ 满足
+\begin{equation}
+  k(\boldsymbol{x},\boldsymbol{z})
+  =
+  \langle\phi(\boldsymbol{x}),\phi(\boldsymbol{z})\rangle_{\mathcal H},
+  \label{eq:kernel-inner-product}
+\end{equation}
+则可以直接计算 $k(\boldsymbol{x},\boldsymbol{z})$，而不显式构造高维特征向量。这种以核函数替代特征空间内积的计算方式称为核技巧。
+
+需要强调的是，核技巧并不是取消了特征映射。算法仍然等价于在特征空间 $\mathcal H$ 中进行学习，只是映射后的坐标被隐含在核函数中。
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    >=Stealth,
+    box/.style={
+      draw=chapterblue,
+      rounded corners=2pt,
+      fill=blue!5,
+      minimum width=3.2cm,
+      minimum height=1.25cm,
+      align=center
+    },
+    op/.style={
+      draw=black!55,
+      rounded corners=2pt,
+      fill=black!3,
+      minimum width=3.1cm,
+      minimum height=1.15cm,
+      align=center
+    }
+  ]
+    \node[box] (input) at (0,0)
+      {原始样本\\\(\boldsymbol{x},\boldsymbol{z}\in\mathbb{R}^d\)};
+
+    \node[op] (map) at (4.7,1.85)
+      {显式特征映射\\\(\phi(\boldsymbol{x}),\phi(\boldsymbol{z})\in\mathbb{R}^D\)};
+    \node[op] (inner) at (9.3,1.85)
+      {高维内积\\\(\phi(\boldsymbol{x})^\top\phi(\boldsymbol{z})\)};
+
+    \node[box,draw=chapterred,fill=red!4] (kernel) at (7.0,-1.55)
+      {直接计算核函数\\\(k(\boldsymbol{x},\boldsymbol{z})\)};
+
+    \draw[->,thick] (input) -- node[above left] {显式路径} (map);
+    \draw[->,thick] (map) -- (inner);
+    \draw[->,chapterred,very thick] (input) -- node[below left] {核技巧} (kernel);
+    \draw[->,chapterred,very thick] (kernel) -- node[below right]
+      {结果相同} (inner);
+
+    \node[chaptergreen,align=center] at (4.7,-3.0)
+      {省去对高维特征坐标的显式构造与存储};
+  \end{tikzpicture}
+  \caption{显式特征映射与核技巧的两条计算路径。二者得到相同的特征空间内积，但核技巧不显式构造高维坐标。}
+  \label{fig:kernel-trick-paths-revised}
+\end{figure}
+
+
+\subsection{Gram 矩阵与半正定条件}
+
+给定训练样本 $\{\boldsymbol{x}_i\}_{i=1}^{n}$，先把映射后的特征向量按行排列，构成特征矩阵
+\[
+  \boldsymbol{\Phi}
+  =
+  \begin{bmatrix}
+    \phi(\boldsymbol{x}_1)^\top\\
+    \phi(\boldsymbol{x}_2)^\top\\
+    \vdots\\
+    \phi(\boldsymbol{x}_n)^\top
+  \end{bmatrix}.
+\]
+其中，矩阵 $\boldsymbol{\Phi}$ 的第 $i$ 行就是样本 $\boldsymbol{x}_i$ 在特征空间中的坐标。用该矩阵乘以自身的转置，得到
+\begin{equation}
+  \boldsymbol{K}
+  =
+  \boldsymbol{\Phi}\boldsymbol{\Phi}^\top,
+  \qquad
+  K_{ij}
+  =
+  \phi(\boldsymbol{x}_i)^\top\phi(\boldsymbol{x}_j)
+  =
+  k(\boldsymbol{x}_i,\boldsymbol{x}_j).
+  \label{eq:gram-matrix-revised}
+\end{equation}
+因此，$\boldsymbol K$ 的第 $i$ 行、第 $j$ 列记录样本 $\boldsymbol{x}_i$ 与 $\boldsymbol{x}_j$ 的核值，这就是 Gram 矩阵。
+
+为了说明半正定条件，任取系数向量
+\[
+  \boldsymbol a=(a_1,a_2,\ldots,a_n)^\top.
+\]
+特征矩阵的转置乘以 $\boldsymbol a$，等于对所有样本的特征向量进行线性组合：
+\begin{equation}
+  \boldsymbol{\Phi}^\top\boldsymbol a
+  =
+  \sum_{i=1}^{n}a_i\phi(\boldsymbol{x}_i).
+  \label{eq:feature-linear-combination}
+\end{equation}
+将式 \eqref{eq:gram-matrix-revised} 和式 \eqref{eq:feature-linear-combination} 代入二次型，可得
+\begin{align*}
+  \boldsymbol a^\top\boldsymbol K\boldsymbol a
+  &=
+  \boldsymbol a^\top
+  \boldsymbol{\Phi}\boldsymbol{\Phi}^\top
+  \boldsymbol a\\
+  &=
+  \bigl(\boldsymbol{\Phi}^\top\boldsymbol a\bigr)^\top
+  \bigl(\boldsymbol{\Phi}^\top\boldsymbol a\bigr)\\
+  &=
+  \left\|
+  \boldsymbol{\Phi}^\top\boldsymbol a
+  \right\|_{\mathcal H}^{2}\\
+  &=
+  \left\|
+  \sum_{i=1}^{n}a_i\phi(\boldsymbol{x}_i)
+  \right\|_{\mathcal H}^{2}
+  \geq0.
+\end{align*}
+最后一项是特征空间中某个向量的长度平方，因此不可能小于零。由此可见，合法核函数所生成的 Gram 矩阵必须是半正定矩阵。
+
+反过来，若函数 $k$ 是对称函数，并且对任意有限样本集合，其 Gram 矩阵都满足
+\[
+  \boldsymbol a^\top\boldsymbol K\boldsymbol a\geq0,
+  \qquad \forall\boldsymbol a\in\mathbb R^n,
+\]
+则 $k$ 可以被解释为某个希尔伯特空间中的内积核。这是机器学习中判定核函数是否合法时最常用的条件。
+
+\paragraph{Mercer 定理与半正定条件。}
+在输入空间紧致、核函数连续且对称等附加条件下，Mercer 定理进一步给出核函数的特征展开
+\begin{equation}
+  k(\boldsymbol{x},\boldsymbol{z})
+  =
+  \sum_{m=1}^{\infty}
+  \lambda_m\psi_m(\boldsymbol{x})\psi_m(\boldsymbol{z}),
+  \qquad
+  \lambda_m\geq0.
+  \label{eq:mercer-expansion}
+\end{equation}
+由此可以构造
+\[
+  \phi(\boldsymbol{x})
+  =
+  \bigl(
+  \sqrt{\lambda_1}\psi_1(\boldsymbol{x}),
+  \sqrt{\lambda_2}\psi_2(\boldsymbol{x}),
+  \ldots
+  \bigr)^\top.
+\]
+需要注意，Mercer 定理是在附加正则条件下给出的谱分解结果；在一般的核方法表述中，更直接的有效性标准是“任意有限样本产生的 Gram 矩阵均为半正定矩阵”。二者不宜写成彼此独立的两套条件。
+
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[x=0.88cm,y=0.88cm]
+    \foreach \i in {0,...,5}{
+      \foreach \j in {0,...,5}{
+        \pgfmathtruncatemacro{\d}{abs(\i-\j)}
+        \pgfmathsetmacro{\shade}{8+15*(5-\d)}
+        \fill[chapterblue!\shade]
+          (\j,-\i) rectangle ++(1,-1);
+        \draw[white,very thin]
+          (\j,-\i) rectangle ++(1,-1);
+      }
+    }
+    \draw[black!70,thick] (0,0) rectangle (6,-6);
+    \draw[chapterred,very thick] (0,0) -- (6,-6);
+    \node[left] at (0,-0.5) {\(\boldsymbol{x}_1\)};
+    \node[left] at (0,-5.5) {\(\boldsymbol{x}_n\)};
+    \node[above] at (0.5,0) {\(\boldsymbol{x}_1\)};
+    \node[above] at (5.5,0) {\(\boldsymbol{x}_n\)};
+    \node[align=left,right=1.0cm] at (6,-1.5)
+      {\(\boldsymbol{K}=\boldsymbol{K}^\top\)\\[0.4em]
+       对角线：样本与自身的核值\\[0.4em]
+       非对角线：不同样本的核值};
+    \node[align=left,right=1.0cm,chapterred] at (6,-4.5)
+      {合法核对任意样本集均产生\\半正定 Gram 矩阵};
+  \end{tikzpicture}
+  \caption{Gram 矩阵集中表示训练样本之间的两两核值。颜色深浅仅用于示意数值大小。}
+  \label{fig:kernel-matrix-revised}
+\end{figure}
+
+
+\subsection{核技巧的适用范围与计算代价}
+
+核技巧要求原算法能够改写为只依赖样本内积的形式，同时要求所采用的函数是合法的半正定核。任意相似度函数并不一定能够直接用于核方法：函数在数值上非负，并不能保证其 Gram 矩阵半正定；反之，合法核也不要求对任意样本对都取非负值，例如线性核 $k(\boldsymbol{x},\boldsymbol{z})=\boldsymbol{x}^\top\boldsymbol{z}$ 可以取负值。
+
+核技巧将计算重点从显式特征维度转移到训练样本之间的两两关系。若训练样本数为 $n$，完整核矩阵需要 $O(n^2)$ 的存储空间，直接求解某些核方法还可能需要 $O(n^3)$ 的时间。因此，核技巧主要解决高维特征的显式构造问题，并不会自动解决大样本计算问题。
+
+
+\begin{table}[htbp]
+  \centering
+  \caption{显式特征映射与核技巧的比较}
+  \label{tab:explicit-vs-kernel-revised}
+  \renewcommand{\arraystretch}{1.35}
+  \begin{tabular}{
+    >{\raggedright\arraybackslash}p{3.1cm}
+    >{\raggedright\arraybackslash}p{5.0cm}
+    >{\raggedright\arraybackslash}p{5.0cm}}
+    \toprule
+    比较维度 & 显式特征映射 & 核技巧 \\
+    \midrule
+    主要表示
+      & 保存每个样本映射后的高维坐标
+      & 保存或按需计算样本之间的核值 \\
+    适合情形
+      & 映射维度可控，且需要直接使用或解释特征
+      & 特征空间很高，但核函数容易直接计算 \\
+    主要优势
+      & 可以直接使用常规线性学习流程
+      & 避免显式构造大量高阶特征 \\
+    主要代价
+      & 特征数可能随多项式阶数迅速增长
+      & 完整核矩阵通常需要 $O(n^2)$ 存储 \\
+    计算瓶颈
+      & 主要受映射后特征维度影响
+      & 主要受训练样本数量影响 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{两类基于核的回归方法}
+
+“核回归”在不同文献中有狭义和广义两种用法。非参数统计中的核回归通常指利用核函数进行局部平滑的回归方法，Nadaraya--Watson 回归是其中最基本的形式；机器学习中的核方法回归则把核函数作为特征空间内积，核岭回归是典型代表。二者都利用训练样本与预测点之间的核值，但核函数的含义、系数的产生方式和模型的训练过程并不相同。
+
+不建议简单地把 Nadaraya--Watson 回归称为“非参数模型”、把核岭回归称为“参数模型”。前者确实属于非参数局部平滑方法；核岭回归在固定有限维特征映射下等价于参数化岭回归，但使用高斯核等无限维核时，通常也被归入非参数核方法。更准确的区分是“局部核加权”与“特征空间中的全局正则化学习”。
+
+\subsection{Nadaraya--Watson 核回归：把核函数作为局部权重}
+
+设训练集为
+\[
+  \mathcal D
+  =
+  \{(\boldsymbol{x}_i,y_i)\}_{i=1}^{n}.
+\]
+对于新样本 $\boldsymbol{x}$，Nadaraya--Watson 核回归的预测为
+\begin{equation}
+  \widehat y_{\mathrm{NW}}(\boldsymbol{x})
+  =
+  \frac{
+    \sum_{i=1}^{n}
+    K_h(\boldsymbol{x}-\boldsymbol{x}_i)y_i
+  }{
+    \sum_{i=1}^{n}
+    K_h(\boldsymbol{x}-\boldsymbol{x}_i)
+  },
+  \label{eq:nw-revised}
+\end{equation}
+其中，$K_h$ 是带宽为 $h$ 的平滑核。常见写法为
+\[
+  K_h(\boldsymbol{u})
+  =
+  h^{-d}K(\boldsymbol{u}/h).
+\]
+在式 \eqref{eq:nw-revised} 的比值中，分子和分母的公共比例因子会相互抵消。
+
+定义预测点相关的归一化权重
+\begin{equation}
+  \omega_i(\boldsymbol{x})
+  =
+  \frac{K_h(\boldsymbol{x}-\boldsymbol{x}_i)}
+  {\sum_{j=1}^{n}K_h(\boldsymbol{x}-\boldsymbol{x}_j)},
+  \label{eq:nw-weight-revised}
+\end{equation}
+则
+\begin{equation}
+  \widehat y_{\mathrm{NW}}(\boldsymbol{x})
+  =
+  \sum_{i=1}^{n}\omega_i(\boldsymbol{x})y_i.
+  \label{eq:nw-weighted-average-revised}
+\end{equation}
+当 $K_h$ 非负时，$\omega_i(\boldsymbol{x})\geq0$ 且
+$\sum_i\omega_i(\boldsymbol{x})=1$，因此预测值是局部训练标签的加权平均。
+
+Nadaraya--Watson 估计也可以从局部加权最小二乘得到。对每一个预测位置 $\boldsymbol{x}$，求解
+\begin{equation}
+  \widehat\beta_0(\boldsymbol{x})
+  =
+  \arg\min_{\beta_0}
+  \sum_{i=1}^{n}
+  K_h(\boldsymbol{x}-\boldsymbol{x}_i)
+  (y_i-\beta_0)^2.
+  \label{eq:nw-local-constant}
+\end{equation}
+其解正是式 \eqref{eq:nw-revised}。因此，Nadaraya--Watson 回归也称为零阶局部多项式回归或局部常数回归。
+
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[x=1.45cm,y=1.05cm,>=Stealth]
+    \draw[->] (0,0) -- (8.0,0) node[right] {\(x\)};
+    \draw[->] (0,0) -- (0,4.9) node[above] {\(y\)};
+
+    \draw[chapterblue!75,thick]
+      (0.45,0.65) .. controls (1.5,1.15) and (2.1,2.7) .. (3.25,3.35)
+      .. controls (4.15,3.85) and (5.05,2.8) .. (5.95,2.15)
+      .. controls (6.65,1.65) and (7.05,1.30) .. (7.50,1.15);
+
+    \foreach \x/\y/\r in {
+      0.65/0.75/1.6,
+      1.35/1.25/1.8,
+      2.15/2.25/2.2,
+      2.85/3.05/3.0,
+      3.45/3.55/4.0,
+      4.00/3.42/4.8,
+      4.55/3.05/3.8,
+      5.15/2.62/2.8,
+      6.00/2.03/2.0,
+      6.85/1.42/1.6
+    }{
+      \fill[chapterblue] (\x,\y) circle (\r pt);
+    }
+
+    \coordinate (query) at (3.9,0);
+    \draw[chapterred,densely dashed,thick] (query) -- (3.9,3.65);
+    \fill[chapterred] (3.9,3.48) circle (2.4pt);
+    \node[below,chapterred] at (query) {新样本 \(x_0\)};
+    \node[above right,chapterred] at (3.9,3.48)
+      {\(\widehat y(x_0)\)};
+
+    \draw[<->,chaptergreen,thick] (2.65,4.30) -- (5.15,4.30);
+    \node[above,chaptergreen] at (3.90,4.30)
+      {越接近 \(x_0\)，局部权重越大};
+
+    \draw[chaptergreen!80,->] (3.55,4.05) -- (3.48,3.63);
+    \draw[chaptergreen!80,->] (4.20,4.05) -- (4.05,3.55);
+  \end{tikzpicture}
+  \caption{Nadaraya--Watson 回归通过局部核值分配预测权重。圆点大小表示训练样本对新样本预测的相对影响。}
+  \label{fig:nw-kernel-regression-weighting}
+\end{figure}
+
+假设新样本与三个训练样本的核值分别为
+\[
+  K_h(\boldsymbol{x}-\boldsymbol{x}_1)=0.8,\qquad
+  K_h(\boldsymbol{x}-\boldsymbol{x}_2)=0.5,\qquad
+  K_h(\boldsymbol{x}-\boldsymbol{x}_3)=0.2,
+\]
+对应标签为 $y_1=2$、$y_2=5$、$y_3=8$。则
+\[
+  \widehat y_{\mathrm{NW}}(\boldsymbol{x})
+  =
+  \frac{0.8\times2+0.5\times5+0.2\times8}{0.8+0.5+0.2}
+  =3.8.
+\]
+这个例子体现了 Nadaraya--Watson 回归的计算过程：先根据预测点计算局部核值，再进行归一化，最后对原始标签加权求和。
+
+
+带宽 $h$ 控制局部邻域的范围。$h$ 较小时，模型主要依赖距离预测点很近的样本，拟合曲线变化较快；$h$ 较大时，更多远距离样本参与预测，结果更平滑。实际应用中还需注意特征尺度、边界偏差、分母过小和逐样本预测成本等问题。
+
+\subsection{核岭回归：把核函数作为特征空间内积}
+
+核岭回归首先把输入映射到特征空间，再在该空间中进行带 $L_2$ 正则项的岭回归。其原始形式为
+\begin{equation}
+  \min_{\boldsymbol w}
+  \sum_{i=1}^{n}
+  \left[
+    y_i-
+    \langle\boldsymbol w,\phi(\boldsymbol{x}_i)\rangle_{\mathcal H}
+  \right]^2
+  +
+  \lambda\|\boldsymbol w\|_{\mathcal H}^{2},
+  \qquad \lambda>0.
+  \label{eq:krr-primal}
+\end{equation}
+根据表示定理，最优函数可以表示为训练样本核函数的线性组合：
+\begin{equation}
+  f(\boldsymbol{x})
+  =
+  \sum_{i=1}^{n}\alpha_i k(\boldsymbol{x}_i,\boldsymbol{x}).
+  \label{eq:krr-representer}
+\end{equation}
+令核矩阵 $\boldsymbol K$ 满足
+$K_{ij}=k(\boldsymbol{x}_i,\boldsymbol{x}_j)$，标签向量为
+$\boldsymbol y=(y_1,\ldots,y_n)^\top$，则系数向量为
+\begin{equation}
+  \boldsymbol\alpha
+  =
+  (\boldsymbol K+\lambda\boldsymbol I)^{-1}\boldsymbol y.
+  \label{eq:krr-alpha}
+\end{equation}
+对于新样本 $\boldsymbol{x}$，定义
+\[
+  \boldsymbol k_{\boldsymbol{x}}
+  =
+  \bigl(
+  k(\boldsymbol{x}_1,\boldsymbol{x}),
+  \ldots,
+  k(\boldsymbol{x}_n,\boldsymbol{x})
+  \bigr)^\top,
+\]
+则预测为
+\begin{equation}
+  \widehat y_{\mathrm{KRR}}(\boldsymbol{x})
+  =
+  \boldsymbol k_{\boldsymbol{x}}^\top
+  (\boldsymbol K+\lambda\boldsymbol I)^{-1}\boldsymbol y
+  =
+  \boldsymbol k_{\boldsymbol{x}}^\top\boldsymbol\alpha.
+  \label{eq:krr-prediction}
+\end{equation}
+
+与 Nadaraya--Watson 回归不同，核岭回归中的 $\boldsymbol\alpha$ 是利用全部训练样本、全部标签和核矩阵共同求得的全局系数，训练完成后不会随预测点改变。预测点只通过 $\boldsymbol k_{\boldsymbol{x}}$ 影响最终结果。核岭回归也可以写成标签的加权和
+\[
+  \widehat y_{\mathrm{KRR}}(\boldsymbol{x})
+  =
+  \boldsymbol s(\boldsymbol{x})^\top\boldsymbol y,
+  \qquad
+  \boldsymbol s(\boldsymbol{x})^\top
+  =
+  \boldsymbol k_{\boldsymbol{x}}^\top
+  (\boldsymbol K+\lambda\boldsymbol I)^{-1},
+\]
+但这些等效权重通常不要求非负，权重之和也不一定等于 $1$。因此，核岭回归不能解释为简单的局部标签平均。
+
+正则化参数 $\lambda$ 控制拟合误差与函数复杂度之间的平衡。$\lambda$ 较小时，模型更强调拟合训练数据；$\lambda$ 较大时，模型系数受到更强约束。若使用高斯核，模型通常还包含核宽度参数，核宽度控制样本在特征空间中的相似范围，而 $\lambda$ 控制全局正则化强度。
+
+\subsection{两种方法的比较}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{Nadaraya--Watson 核回归与核岭回归的比较}
+  \label{tab:nw-vs-krr-revised}
+  \renewcommand{\arraystretch}{1.35}
+  \begin{tabular}{
+    >{\raggedright\arraybackslash}p{2.7cm}
+    >{\raggedright\arraybackslash}p{5.0cm}
+    >{\raggedright\arraybackslash}p{5.0cm}}
+    \toprule
+    比较维度 & Nadaraya--Watson 核回归 & 核岭回归 \\
+    \midrule
+    基本思想
+      & 在预测点附近对训练标签进行局部加权平均
+      & 在核定义的特征空间中求解带正则项的全局最小二乘问题 \\
+    核函数的作用
+      & 生成预测点相关的局部权重
+      & 表示特征空间中的内积 \\
+    典型公式
+      & $\widehat y(\boldsymbol{x})=\sum_i\omega_i(\boldsymbol{x})y_i$
+      & $\widehat y(\boldsymbol{x})=\boldsymbol k_{\boldsymbol{x}}^\top(\boldsymbol K+\lambda\boldsymbol I)^{-1}\boldsymbol y$ \\
+    系数的产生方式
+      & 对每个预测点重新计算并归一化
+      & 通过全部训练样本和标签一次性全局求解 \\
+    权重性质
+      & 使用非负核时，权重非负且和为 $1$
+      & 等效权重可为负，权重之和通常不等于 $1$ \\
+    是否要求半正定核
+      & 作为局部平滑权重时通常不要求满足 Mercer 核条件
+      & 必须使用能够产生半正定 Gram 矩阵的合法核 \\
+    主要超参数
+      & 带宽 $h$
+      & 正则化参数 $\lambda$ 以及核参数 \\
+    训练与预测
+      & 几乎无显式训练，但预测通常需要访问全部训练样本
+      & 训练需解核矩阵线性方程，预测需与训练样本计算核值 \\
+    方法性质
+      & 局部、非参数平滑
+      & 全局正则化核方法；有限维映射下等价于参数化岭回归，常用无限维核下通常视为非参数方法 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+由表 \ref{tab:nw-vs-krr-revised} 可见，两种方法的共同点只是预测都涉及样本间的核值。Nadaraya--Watson 回归直接把核值归一化为局部权重；核岭回归则先利用完整 Gram 矩阵求得全局系数，再通过核函数完成预测。前者的关键控制量是带宽，后者同时受到核参数和正则化参数的影响。
+
+\subsection{术语范围}
+
+在非参数统计语境中，“核回归”通常主要指 Nadaraya--Watson 回归、局部线性回归和局部多项式回归等核平滑方法。在机器学习语境中，“基于核的回归方法”还可以包括核岭回归、支持向量回归和高斯过程回归等。为避免混淆，本文将前一类称为“核平滑回归”，将后一类称为“核方法回归”。
+
+\end{document}

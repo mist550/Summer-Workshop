@@ -1,0 +1,641 @@
+\documentclass[UTF8,zihao=-4,openany]{ctexbook}
+
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,calc,positioning,shapes.geometric}
+\usepackage{hyperref}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  urlcolor=blue!60!black
+}
+
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0pt}
+\setlist{itemsep=0.35em,topsep=0.5em}
+\raggedbottom
+
+\definecolor{chapterblue}{RGB}{33,91,155}
+\definecolor{chapterred}{RGB}{184,54,48}
+\definecolor{chaptergreen}{RGB}{45,128,92}
+\definecolor{chapterorange}{RGB}{196,112,24}
+
+\begin{document}
+
+\setcounter{chapter}{11}
+\chapter{聚类分析与无监督学习}
+\setcounter{section}{5}
+
+\section{谱聚类的基本思想}
+
+K-means 直接在特征空间中比较样本到簇中心的距离，因此更擅长发现近似球形、尺度相近的簇。当数据形成弯月、环形或其他非凸结构时，同一簇中的两个样本可能在欧氏空间中相距较远，却能通过一系列局部相似的样本彼此连通。谱聚类（spectral clustering）正是从这种“局部连接形成整体簇”的观点出发，把聚类转化为图划分问题。
+
+谱聚类的主线可以概括为
+\[
+  \boxed{
+  \text{样本}
+  \longrightarrow
+  \text{相似图}
+  \longrightarrow
+  \text{图拉普拉斯}
+  \longrightarrow
+  \text{谱嵌入}
+  \longrightarrow
+  \text{常规聚类}
+  }.
+\]
+其中“谱”指矩阵的特征值和特征向量。谱聚类不是直接在原始坐标上分组，而是先利用图拉普拉斯矩阵的特征向量学习一个低维表示，再在该表示中完成聚类。
+
+\subsection{从样本到相似图}
+
+设数据集为
+\[
+  \mathcal D=\{\boldsymbol{x}_1,\boldsymbol{x}_2,\ldots,\boldsymbol{x}_n\},
+  \qquad
+  \boldsymbol{x}_i\in\mathbb R^d.
+\]
+把每个样本看作图中的一个节点，得到加权无向图
+\[
+  G=(V,E,\boldsymbol W),
+\]
+其中 \(V\) 是节点集合，\(E\) 是边集合，\(\boldsymbol W=[w_{ij}]\) 是相似度矩阵。元素 \(w_{ij}\) 表示样本 \(\boldsymbol{x}_i\) 与 \(\boldsymbol{x}_j\) 的连接强度。常用的高斯相似度为
+\begin{equation}
+  w_{ij}
+  =
+  \exp\left(
+  -\frac{\|\boldsymbol{x}_i-\boldsymbol{x}_j\|_2^2}{2\sigma^2}
+  \right),
+  \qquad i\neq j,
+  \label{eq:spectral-rbf-weight}
+\end{equation}
+并令 \(w_{ii}=0\)。带宽 \(\sigma\) 控制相似性随距离衰减的速度。
+
+如果对所有样本对都计算式 \eqref{eq:spectral-rbf-weight}，就得到完全图；在实际任务中，更常见的做法是只保留局部边，例如：
+
+\begin{itemize}
+  \item \textbf{\(k\) 近邻图：}仅连接每个样本与其 \(k\) 个近邻，再将图对称化；
+  \item \textbf{\(\varepsilon\) 邻域图：}仅连接距离不超过 \(\varepsilon\) 的样本；
+  \item \textbf{自适应邻域图：}根据局部密度为不同样本设置不同尺度。
+\end{itemize}
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[x=1.15cm,y=1.05cm,>=Stealth]
+    \draw[->] (-0.2,0) -- (8.1,0) node[right] {\(x_1\)};
+    \draw[->] (0,-0.2) -- (0,4.9) node[above] {\(x_2\)};
+
+    \coordinate (a1) at (0.8,1.2);
+    \coordinate (a2) at (1.4,2.0);
+    \coordinate (a3) at (2.2,2.7);
+    \coordinate (a4) at (3.2,3.0);
+    \coordinate (a5) at (4.2,2.7);
+    \coordinate (a6) at (5.0,2.0);
+    \coordinate (a7) at (5.5,1.2);
+
+    \coordinate (b1) at (2.0,1.1);
+    \coordinate (b2) at (2.7,0.65);
+    \coordinate (b3) at (3.6,0.48);
+    \coordinate (b4) at (4.5,0.65);
+    \coordinate (b5) at (5.3,1.2);
+    \coordinate (b6) at (5.9,2.0);
+    \coordinate (b7) at (6.2,2.8);
+
+    \foreach \u/\v in {a1/a2,a2/a3,a3/a4,a4/a5,a5/a6,a6/a7,a2/a4,a3/a5,a4/a6}{
+      \draw[chapterblue!55,thick] (\u) -- (\v);
+    }
+    \foreach \u/\v in {b1/b2,b2/b3,b3/b4,b4/b5,b5/b6,b6/b7,b1/b3,b2/b4,b3/b5,b5/b7}{
+      \draw[chapterred!55,thick] (\u) -- (\v);
+    }
+    \draw[black!35,dashed] (a7) -- (b6);
+
+    \foreach \p in {a1,a2,a3,a4,a5,a6,a7}{
+      \fill[chapterblue] (\p) circle (2.7pt);
+    }
+    \foreach \p in {b1,b2,b3,b4,b5,b6,b7}{
+      \fill[chapterred] (\p) circle (2.7pt);
+    }
+
+    \node[chapterblue,align=center] at (2.3,4.15)
+      {局部强连接\\形成第一簇};
+    \node[chapterred,align=center] at (6.15,0.65)
+      {局部强连接\\形成第二簇};
+    \draw[chapterblue,->] (2.3,3.85) -- (2.8,3.0);
+    \draw[chapterred,->] (5.85,0.85) -- (5.15,1.25);
+    \node[black!60] at (6.25,3.85)
+      {簇间连接弱};
+    \draw[black!50,->] (6.0,3.55) -- (5.35,2.0);
+  \end{tikzpicture}
+  \caption{谱聚类把样本组织成相似图。即使簇呈非凸形状，只要簇内局部连接较强、簇间连接较弱，图划分仍能恢复其结构。}
+  \label{fig:spectral-similarity-graph}
+\end{figure}
+
+图 \ref{fig:spectral-similarity-graph} 展示了谱聚类与 K-means 的主要差别。谱聚类关心的不是能否用一个中心代表全部样本，而是能否在尽量切断弱连接的同时保留强连接。
+
+\subsection{度矩阵与图拉普拉斯矩阵}
+
+节点 \(i\) 的加权度定义为与它相连的全部边权之和：
+\begin{equation}
+  d_i=\sum_{j=1}^{n}w_{ij}.
+  \label{eq:graph-degree}
+\end{equation}
+把各节点度数放在对角线上，得到度矩阵
+\[
+  \boldsymbol D
+  =
+  \operatorname{diag}(d_1,d_2,\ldots,d_n).
+\]
+最基本的非归一化图拉普拉斯矩阵为
+\begin{equation}
+  \boldsymbol L
+  =
+  \boldsymbol D-\boldsymbol W.
+  \label{eq:unnormalized-laplacian}
+\end{equation}
+
+图拉普拉斯矩阵把“相邻节点的表示应当接近”写成了一个二次型。对于任意向量
+\(
+\boldsymbol f=(f_1,\ldots,f_n)^\top
+\)，有
+\begin{align}
+  \boldsymbol f^\top\boldsymbol L\boldsymbol f
+  &=
+  \boldsymbol f^\top(\boldsymbol D-\boldsymbol W)\boldsymbol f \notag\\
+  &=
+  \frac{1}{2}
+  \sum_{i=1}^{n}\sum_{j=1}^{n}
+  w_{ij}(f_i-f_j)^2
+  \geq0.
+  \label{eq:laplacian-smoothness}
+\end{align}
+若两个节点的边权 \(w_{ij}\) 很大，而 \(f_i\) 与 \(f_j\) 差异也很大，式 \eqref{eq:laplacian-smoothness} 就会受到较大惩罚。因此，较小的拉普拉斯二次型对应“在强连接边上变化平缓”的节点表示。
+
+由式 \eqref{eq:laplacian-smoothness} 可知，\(\boldsymbol L\) 是半正定矩阵，所有特征值都非负。此外，
+\[
+  \boldsymbol L\boldsymbol 1=\boldsymbol 0,
+\]
+所以常数向量 \(\boldsymbol 1\) 是特征值 \(0\) 对应的特征向量。图中有几个连通分量，特征值 \(0\) 的重数就是几；这正是拉普拉斯谱能够反映图连通结构的原因。
+
+为了减弱节点度数差异带来的影响，常使用两种归一化拉普拉斯矩阵：
+\begin{align}
+  \boldsymbol L_{\mathrm{sym}}
+  &=
+  \boldsymbol D^{-1/2}\boldsymbol L\boldsymbol D^{-1/2}
+  =
+  \boldsymbol I-\boldsymbol D^{-1/2}\boldsymbol W\boldsymbol D^{-1/2},
+  \label{eq:symmetric-normalized-laplacian}\\
+  \boldsymbol L_{\mathrm{rw}}
+  &=
+  \boldsymbol D^{-1}\boldsymbol L
+  =
+  \boldsymbol I-\boldsymbol D^{-1}\boldsymbol W.
+  \label{eq:random-walk-laplacian}
+\end{align}
+其中下标 \(\mathrm{rw}\) 表示 random walk，因为 \(\boldsymbol D^{-1}\boldsymbol W\) 可以解释为随机游走的转移概率矩阵。若存在孤立节点使 \(d_i=0\)，归一化前必须单独处理，否则 \(\boldsymbol D^{-1}\) 不存在。
+
+\subsection{从图割到特征向量}
+
+设节点集合被分为两个互不相交的部分 \(A\) 和 \(B\)。两部分之间的割（cut）定义为
+\begin{equation}
+  \operatorname{cut}(A,B)
+  =
+  \sum_{i\in A}\sum_{j\in B}w_{ij}.
+  \label{eq:graph-cut}
+\end{equation}
+仅最小化 \(\operatorname{cut}(A,B)\) 容易产生一个极小簇，例如单独切出一个弱连接节点。为鼓励较平衡的划分，可以使用 RatioCut：
+\begin{equation}
+  \operatorname{RatioCut}(A_1,\ldots,A_K)
+  =
+  \sum_{k=1}^{K}
+  \frac{\operatorname{cut}(A_k,\overline{A_k})}{|A_k|},
+  \label{eq:ratiocut}
+\end{equation}
+或使用归一化割：
+\begin{equation}
+  \operatorname{Ncut}(A_1,\ldots,A_K)
+  =
+  \sum_{k=1}^{K}
+  \frac{\operatorname{cut}(A_k,\overline{A_k})}
+  {\operatorname{vol}(A_k)},
+  \qquad
+  \operatorname{vol}(A_k)=\sum_{i\in A_k}d_i.
+  \label{eq:normalized-cut}
+\end{equation}
+
+直接寻找离散的最优图划分通常是困难的。谱聚类把离散簇指示变量放宽为连续向量，从而把问题转化为带约束的二次型最小化。以二分类为例，放松后的典型问题为
+\begin{equation}
+  \min_{\boldsymbol f}
+  \boldsymbol f^\top\boldsymbol L\boldsymbol f,
+  \qquad
+  \boldsymbol f^\top\boldsymbol 1=0,
+  \qquad
+  \|\boldsymbol f\|_2=1.
+  \label{eq:spectral-relaxation}
+\end{equation}
+其解是 \(\boldsymbol L\) 的第二小特征值对应的特征向量，称为 Fiedler 向量。最小特征值对应常数向量，只表示所有节点取相同值，不能提供划分；第二小特征向量则是在保持强连接节点取值接近的同时，最容易发生变化的非平凡方向。根据其符号或阈值即可得到两个簇。
+
+对于 \(K\) 个簇，需要取拉普拉斯矩阵最小的 \(K\) 个特征值对应的特征向量，将它们按列组成矩阵
+\[
+  \boldsymbol U
+  =
+  [\boldsymbol u_1,\boldsymbol u_2,\ldots,\boldsymbol u_K]
+  \in\mathbb R^{n\times K}.
+\]
+矩阵 \(\boldsymbol U\) 的第 \(i\) 行就是样本 \(\boldsymbol{x}_i\) 的新表示。原始样本可能处于很高维或形成非凸结构，但在谱嵌入空间中，同一图连通区域的行向量通常更加接近。
+
+\subsection{一个四节点例子}
+
+考虑四个节点，其中节点 \(1,2\) 强连接，节点 \(3,4\) 强连接，两组之间只有强度为 \(\varepsilon\) 的弱边，且 \(0<\varepsilon\ll1\)：
+\[
+  \boldsymbol W
+  =
+  \begin{bmatrix}
+    0&1&\varepsilon&0\\
+    1&0&0&\varepsilon\\
+    \varepsilon&0&0&1\\
+    0&\varepsilon&1&0
+  \end{bmatrix},
+  \qquad
+  \boldsymbol D=(1+\varepsilon)\boldsymbol I.
+\]
+因此
+\[
+  \boldsymbol L
+  =
+  \begin{bmatrix}
+    1+\varepsilon&-1&-\varepsilon&0\\
+    -1&1+\varepsilon&0&-\varepsilon\\
+    -\varepsilon&0&1+\varepsilon&-1\\
+    0&-\varepsilon&-1&1+\varepsilon
+  \end{bmatrix}.
+\]
+常数向量
+\(
+\boldsymbol u_1=(1,1,1,1)^\top
+\)
+满足 \(\boldsymbol L\boldsymbol u_1=\boldsymbol0\)。另取
+\[
+  \boldsymbol u_2=(1,1,-1,-1)^\top,
+\]
+可以验证
+\begin{equation}
+  \boldsymbol L\boldsymbol u_2
+  =
+  2\varepsilon\boldsymbol u_2.
+  \label{eq:four-node-fiedler}
+\end{equation}
+当 \(\varepsilon\) 很小时，\(2\varepsilon\) 是一个很小的非零特征值；对应特征向量在节点 \(1,2\) 上取正值，在节点 \(3,4\) 上取负值，恰好给出划分
+\[
+  \{1,2\}
+  \qquad\text{和}\qquad
+  \{3,4\}.
+\]
+这个例子说明，小特征值对应图中容易被弱边分开的结构。
+
+\subsection{归一化谱聚类算法}
+
+实践中常使用基于 \(\boldsymbol L_{\mathrm{sym}}\) 的归一化谱聚类，其步骤如下：
+
+\begin{enumerate}
+  \item 根据样本距离或任务相似性构造对称矩阵 \(\boldsymbol W\)；
+  \item 计算度矩阵 \(\boldsymbol D\) 和归一化拉普拉斯矩阵 \(\boldsymbol L_{\mathrm{sym}}\)；
+  \item 求 \(\boldsymbol L_{\mathrm{sym}}\) 最小的 \(K\) 个特征值对应的特征向量，组成 \(\boldsymbol U\in\mathbb R^{n\times K}\)；
+  \item 将 \(\boldsymbol U\) 的每一行归一化为单位长度，得到 \(\boldsymbol Y\)；
+  \item 把 \(\boldsymbol Y\) 的第 \(i\) 行看作第 \(i\) 个样本的新表示，在这些行向量上运行 K-means；
+  \item 将 K-means 得到的簇标签返回给原始样本。
+\end{enumerate}
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    >=Stealth,
+    processbox/.style={
+      draw=chapterblue,
+      fill=blue!5,
+      rounded corners=2pt,
+      minimum width=2.45cm,
+      minimum height=1.25cm,
+      align=center
+    }
+  ]
+    \node[processbox] (x) {原始样本\\\(\boldsymbol X\)};
+    \node[processbox,right=0.55cm of x] (w) {相似图\\\(\boldsymbol W\)};
+    \node[processbox,right=0.55cm of w] (l) {图拉普拉斯\\\(\boldsymbol L_{\mathrm{sym}}\)};
+    \node[processbox,right=0.55cm of l] (u) {小特征向量\\\(\boldsymbol U\)};
+    \node[processbox,right=0.55cm of u,draw=chapterred,fill=red!4] (c) {行归一化\\K-means};
+
+    \draw[->,thick] (x) -- (w);
+    \draw[->,thick] (w) -- (l);
+    \draw[->,thick] (l) -- (u);
+    \draw[->,thick] (u) -- (c);
+
+    \node[chaptergreen,below=0.65cm of l,align=center]
+      {先用图结构学习表示，再在表示空间中聚类};
+  \end{tikzpicture}
+  \caption{归一化谱聚类的计算流程。最终的 K-means 作用于拉普拉斯特征向量形成的谱嵌入，而不是原始特征。}
+  \label{fig:spectral-clustering-pipeline}
+\end{figure}
+
+\subsection{参数、复杂度与使用边界}
+
+谱聚类的表现不仅取决于最后的 K-means，也高度依赖相似图。实际使用时需要注意：
+
+\begin{itemize}
+  \item \textbf{特征尺度：}距离计算前应在训练数据上建立合理的标准化或表示，否则量纲较大的特征会支配图结构；
+  \item \textbf{图参数：}\(k\)、\(\varepsilon\) 或高斯带宽过小会使图碎裂，过大则会连接原本不同的簇；
+  \item \textbf{簇数：}通常仍需预先给定 \(K\)。特征值之间明显的间隔（eigengap）可以作为参考，但不能替代领域判断；
+  \item \textbf{计算成本：}完整相似矩阵需要 \(O(n^2)\) 存储，特征分解在大样本下成本较高；可使用稀疏近邻图、迭代特征求解或 Nystr\"om 近似；
+  \item \textbf{可复现性：}特征向量的符号不唯一，最后的 K-means 也受初始化影响，应固定随机种子并报告多次运行结果。
+\end{itemize}
+
+谱聚类的优势是能够利用非凸、连通和流形结构；其代价是需要显式设计相似图，并进行矩阵特征分解。因此，它适合中小规模、样本关系比单一簇中心更重要的任务。
+
+\clearpage
+\section{聚类评价指标：ARI、NMI、ACC 与 Silhouette}
+
+聚类没有统一的“正确答案”。评价前首先要明确是否存在可供比较的真实标签：
+
+\begin{itemize}
+  \item \textbf{外部指标：}利用真实标签比较聚类结果，包括 ARI、NMI 和 ACC；
+  \item \textbf{内部指标：}只根据样本和聚类结果评价簇内紧密、簇间分离等性质，Silhouette 是常见代表。
+\end{itemize}
+
+外部指标衡量“是否恢复已有标签”，内部指标衡量“当前表示和距离下的几何结构是否清晰”。两者回答的问题不同，不能相互替代。
+
+\subsection{列联表与标签置换}
+
+设真实类别划分为
+\(
+\mathcal U=\{U_1,\ldots,U_R\}
+\)，聚类结果为
+\(
+\mathcal V=\{V_1,\ldots,V_C\}
+\)。定义列联表元素
+\begin{equation}
+  n_{rc}=|U_r\cap V_c|,
+  \label{eq:contingency-cell}
+\end{equation}
+并定义行和、列和
+\[
+  a_r=\sum_{c=1}^{C}n_{rc},
+  \qquad
+  b_c=\sum_{r=1}^{R}n_{rc},
+  \qquad
+  n=\sum_{r=1}^{R}\sum_{c=1}^{C}n_{rc}.
+\]
+其中 \(n_{rc}\) 表示真实类别 \(r\) 与聚类簇 \(c\) 共同包含的样本数。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[x=1.05cm,y=0.9cm]
+    \foreach \r in {0,...,3}{
+      \foreach \c in {0,...,3}{
+        \pgfmathtruncatemacro{\diag}{ifthenelse(\r==\c,1,0)}
+        \ifnum\diag=1
+          \fill[chapterblue!65] (\c,-\r) rectangle ++(1,-1);
+        \else
+          \fill[chapterblue!12] (\c,-\r) rectangle ++(1,-1);
+        \fi
+        \draw[white,thick] (\c,-\r) rectangle ++(1,-1);
+      }
+    }
+    \draw[black!70,thick] (0,0) rectangle (4,-4);
+    \node[left] at (0,-0.5) {真实类 \(U_1\)};
+    \node[left] at (0,-3.5) {真实类 \(U_R\)};
+    \node[above] at (0.5,0) {簇 \(V_1\)};
+    \node[above] at (3.5,0) {簇 \(V_C\)};
+
+    \draw[chapterred,very thick] (0,0) -- (4,-4);
+    \node[right=1.0cm,align=left] at (4,-1.0)
+      {每个方格：\(n_{rc}=|U_r\cap V_c|\)};
+    \node[right=1.0cm,align=left,chapterred] at (4,-3.0)
+      {ACC 先寻找一种列置换，\\使匹配位置上的计数之和最大};
+  \end{tikzpicture}
+  \caption{真实类别与聚类簇形成列联表。聚类编号本身没有语义，评价时不能直接把“簇 1”视为“真实类 1”。}
+  \label{fig:clustering-contingency-table}
+\end{figure}
+
+例如，真实标签为 \((A,A,A,B,B,B)\)，聚类编号为 \((2,2,2,1,1,1)\)。虽然编号完全相反，但分组结构是正确的。ARI 和 NMI 天然不受编号置换影响；ACC 则必须先寻找最佳标签匹配。
+
+\subsection{ARI：校正随机一致性的样本对指标}
+
+Rand Index 的思想是考察任意两个样本：真实标签和聚类结果是否同时把它们放在一起，或者同时把它们分开。ARI（adjusted Rand index）在此基础上扣除了随机划分也可能产生的一致性。
+
+在列联表中，落在同一单元格的任意两个样本，在真实标签和聚类结果中都属于同组，因此这种样本对数量为
+\[
+  \sum_{r=1}^{R}\sum_{c=1}^{C}\binom{n_{rc}}{2}.
+\]
+真实类别中的同类样本对总数为
+\(
+\sum_r\binom{a_r}{2}
+\)，聚类结果中的同簇样本对总数为
+\(
+\sum_c\binom{b_c}{2}
+\)。ARI 定义为
+\begin{equation}
+  \operatorname{ARI}
+  =
+  \frac{
+    \displaystyle
+    \sum_{r,c}\binom{n_{rc}}{2}
+    -
+    \frac{
+      \displaystyle
+      \left(\sum_r\binom{a_r}{2}\right)
+      \left(\sum_c\binom{b_c}{2}\right)
+    }{\binom{n}{2}}
+  }{
+    \displaystyle
+    \frac{1}{2}
+    \left[
+      \sum_r\binom{a_r}{2}
+      +
+      \sum_c\binom{b_c}{2}
+    \right]
+    -
+    \frac{
+      \displaystyle
+      \left(\sum_r\binom{a_r}{2}\right)
+      \left(\sum_c\binom{b_c}{2}\right)
+    }{\binom{n}{2}}
+  }.
+  \label{eq:ari}
+\end{equation}
+
+ARI 等于 \(1\) 表示两个划分完全一致；接近 \(0\) 表示与随机划分的期望水平相近；在某些情况下可以为负，表示一致性比随机期望还差。ARI 对簇编号置换不敏感，但在簇数、簇规模高度不均衡时仍应结合其他指标解释。
+
+\subsection{NMI：聚类结果共享了多少标签信息}
+
+NMI（normalized mutual information）从信息论角度评价真实标签 \(U\) 与聚类标签 \(V\) 的关联。由列联表定义概率
+\[
+  p_{rc}=\frac{n_{rc}}{n},
+  \qquad
+  p_r=\frac{a_r}{n},
+  \qquad
+  q_c=\frac{b_c}{n}.
+\]
+互信息为
+\begin{equation}
+  I(U;V)
+  =
+  \sum_{r=1}^{R}\sum_{c=1}^{C}
+  p_{rc}
+  \log\frac{p_{rc}}{p_rq_c},
+  \label{eq:mutual-information}
+\end{equation}
+其中约定 \(p_{rc}=0\) 的项贡献为 \(0\)。真实标签和聚类标签的熵分别为
+\[
+  H(U)=-\sum_{r=1}^{R}p_r\log p_r,
+  \qquad
+  H(V)=-\sum_{c=1}^{C}q_c\log q_c.
+\]
+一种常用归一化方式为
+\begin{equation}
+  \operatorname{NMI}(U,V)
+  =
+  \frac{2I(U;V)}{H(U)+H(V)}.
+  \label{eq:nmi}
+\end{equation}
+NMI 通常位于 \([0,1]\)：越接近 \(1\)，说明聚类结果包含越多真实标签信息。不同软件可能采用 \(I/\sqrt{H(U)H(V)}\) 等其他归一化方式，因此报告结果时应说明实现或软件版本。
+
+NMI 不要求簇编号与类别编号对齐，也比直接准确率更适合比较分组结构；但普通 NMI 没有像 ARI 那样完全校正有限样本下的随机一致性，在簇数很多时可能产生偏高倾向。
+
+\subsection{ACC：最佳标签匹配后的准确率}
+
+设聚类算法给出的簇标签为 \(c_i\)，真实标签为 \(y_i\)。由于簇编号可以任意交换，聚类准确率 ACC 定义为
+\begin{equation}
+  \operatorname{ACC}
+  =
+  \max_{\pi}
+  \frac{1}{n}
+  \sum_{i=1}^{n}
+  \mathbb I\{y_i=\pi(c_i)\},
+  \label{eq:clustering-accuracy}
+\end{equation}
+其中 \(\pi\) 是簇编号到真实类别编号的一个置换，\(\mathbb I\{\cdot\}\) 是指示函数。实践中通常根据列联表使用匈牙利算法寻找总匹配数最大的映射。
+
+若簇数和真实类别数不同，需要先明确实现如何处理未匹配的簇或类别。ACC 直观易懂，但依赖真实标签，而且把每个样本是否匹配压缩成 \(0/1\)，无法像 NMI 那样表达信息共享程度。
+
+\subsection{Silhouette：簇内紧密与簇间分离}
+
+Silhouette（轮廓系数）不需要真实标签。对于样本 \(i\)，设它所属的簇为 \(C_i\)。它到同簇其他样本的平均距离为
+\begin{equation}
+  a(i)
+  =
+  \frac{1}{|C_i|-1}
+  \sum_{\substack{j\in C_i\\j\neq i}}
+  d(\boldsymbol{x}_i,\boldsymbol{x}_j),
+  \label{eq:silhouette-a}
+\end{equation}
+表示簇内不紧密程度。样本 \(i\) 到另一个簇 \(C\neq C_i\) 的平均距离为
+\[
+  \delta(i,C)
+  =
+  \frac{1}{|C|}
+  \sum_{j\in C}d(\boldsymbol{x}_i,\boldsymbol{x}_j).
+\]
+取其中最小值
+\begin{equation}
+  b(i)
+  =
+  \min_{C\neq C_i}\delta(i,C),
+  \label{eq:silhouette-b}
+\end{equation}
+作为样本到“最近其他簇”的平均距离。样本 \(i\) 的轮廓系数为
+\begin{equation}
+  s(i)
+  =
+  \frac{b(i)-a(i)}{\max\{a(i),b(i)\}}.
+  \label{eq:silhouette}
+\end{equation}
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[x=1.1cm,y=1.0cm,>=Stealth]
+    \coordinate (q) at (2.6,2.2);
+    \foreach \x/\y in {0.9/1.5,1.3/2.4,1.8/1.9,2.1/2.8,2.8/1.4,3.2/2.7,3.5/1.9}{
+      \fill[chapterblue] (\x,\y) circle (2.6pt);
+    }
+    \foreach \x/\y in {6.0/1.3,6.4/2.2,6.8/1.7,7.1/2.8,7.6/1.4,7.9/2.3}{
+      \fill[chapterred] (\x,\y) circle (2.6pt);
+    }
+    \fill[chapterorange] (q) circle (4pt);
+    \node[chapterorange] at (2.6,3.35) {样本 \(i\)};
+
+    \draw[chapterblue!65,dashed] (q) circle (1.55cm);
+    \draw[chapterred,dashed,->,thick] (q) -- (6.7,2.05)
+      node[midway,above] {\(b(i)\)：到最近其他簇};
+    \draw[chapterblue,->,thick] (q) -- (1.65,1.95)
+      node[midway,below] {\(a(i)\)};
+
+    \node[chapterblue] at (2.1,0.25) {当前簇 \(C_i\)};
+    \node[chapterred] at (7.0,0.25) {最近其他簇};
+  \end{tikzpicture}
+  \caption{轮廓系数比较样本的簇内平均距离 \(a(i)\) 与最近其他簇平均距离 \(b(i)\)。图中连线仅表示这两个平均量的方向。}
+  \label{fig:silhouette-geometry}
+\end{figure}
+
+由式 \eqref{eq:silhouette} 可知，\(s(i)\in[-1,1]\)：
+
+\begin{itemize}
+  \item \(s(i)\) 接近 \(1\)：\(a(i)\ll b(i)\)，样本与本簇紧密且远离其他簇；
+  \item \(s(i)\) 接近 \(0\)：样本可能位于簇边界；
+  \item \(s(i)<0\)：样本到其他簇平均距离更小，可能被分错。
+\end{itemize}
+
+整个数据集的 Silhouette 得分通常取 \(n\) 个样本轮廓系数的平均值。对于单样本簇，式 \eqref{eq:silhouette-a} 无法正常计算，常见软件通常将其轮廓系数设为 \(0\)。Silhouette 依赖所选距离，并偏好簇内紧密、簇间分离的结构；对非凸簇、密度差异较大的簇可能给出不符合领域直觉的评价。
+
+\subsection{四种指标的比较与报告建议}
+
+\begin{table}[htbp]
+  \centering
+  \caption{常见聚类评价指标的比较}
+  \label{tab:clustering-metrics-comparison}
+  \small
+  \renewcommand{\arraystretch}{1.18}
+  \begin{tabular}{
+    >{\raggedright\arraybackslash}p{2.2cm}
+    >{\raggedright\arraybackslash}p{2.5cm}
+    >{\raggedright\arraybackslash}p{4.2cm}
+    >{\raggedright\arraybackslash}p{4.3cm}}
+    \toprule
+    指标 & 是否需要真实标签 & 主要衡量内容 & 需要注意的问题 \\
+    \midrule
+    ARI
+      & 需要
+      & 样本对的分组一致性，并校正随机期望
+      & 受簇规模和簇数结构影响，可能为负 \\
+    NMI
+      & 需要
+      & 聚类标签与真实标签共享的信息
+      & 存在不同归一化定义，簇数很多时可能偏高 \\
+    ACC
+      & 需要
+      & 最佳标签匹配后的样本准确率
+      & 必须先做标签置换匹配；簇数不同时需说明规则 \\
+    Silhouette
+      & 不需要
+      & 簇内紧密程度与簇间分离程度
+      & 依赖距离和簇形状，对非凸或不同密度簇可能不理想 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+聚类实验不应只报告一个分数。较稳妥的做法是：
+
+\begin{enumerate}[itemsep=2pt,topsep=4pt]
+  \item 有真实标签时，同时报告至少一种随机校正指标（如 ARI）和一种信息或样本级指标（如 NMI、ACC）；
+  \item 无真实标签时，将 Silhouette 与可视化、簇规模、领域解释和下游任务表现结合；
+  \item 对 K-means、谱聚类等含随机步骤的方法，使用多个随机种子并报告均值和标准差；
+  \item 在验证阶段选择簇数、图参数和距离度量，避免根据最终测试标签反复调参；
+  \item 检查小簇、孤立点和不稳定样本，而不仅观察全局平均分数。
+\end{enumerate}
+
+本节四个指标分别从样本对、信息共享、标签匹配和几何分离四个角度观察聚类。真实标签也未必代表唯一合理的分组方式，因此评价结果最终还需回到任务目标：这些簇是否稳定、可解释，并能支持后续研究或应用。
+
+\end{document}
